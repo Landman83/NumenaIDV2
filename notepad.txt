@@ -1,0 +1,17 @@
+Users upload documents to the platform which are turned into NFTs minted to the user's wallet.
+Only the user is able to see the documents.
+With user consent, these documents can be used by Attribute Verifiers to verify credentials.
+Audit trail stored in the NFT metadata
+Verifier addresses and identifying information stored in VerifierRegistry
+AttributeValidator checks that the attribute was issued by a registered verifier with the proper permissions
+
+Users have identity contracts which can possess "attributes"
+When an attribute is properly verified, an attribute will be added to the user's identity
+Attribute checker can be used to check if the user has certain attributes
+
+Need a maximally privacy preserving way to map identity contract addresses to user's wallet addresses.
+
+Verifier reputation system based on Fleek reputation system for servers
+Verifiers able to mint NMA or USDC by verifiying attributes 
+
+ERC-1155 FOR THE TOKENS TO SOLVE THE MULTIPLE ROUNDS PROBLEM !!!
