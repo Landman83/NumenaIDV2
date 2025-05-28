@@ -68,31 +68,34 @@ contract Identity is IIdentity, ReentrancyGuard {
      * @param expiresAt Timestamp when claim expires (0 for no expiration)
      * @param data Encoded claim data specific to the claim type
      * @param signature Cryptographic signature of the claim data by the signer
+     * @param signer The address that created the signature
      */
     function addClaim(
         uint256 claimType,
         uint256[] calldata documentIds,
         uint256 expiresAt,
         bytes calldata data,
-        bytes calldata signature
-    ) external onlyAuthorizedSigner nonReentrant {
+        bytes calldata signature,
+        address signer
+    ) external nonReentrant {
         // Validate inputs
         if (expiresAt != 0 && expiresAt <= block.timestamp) revert Errors.InvalidData();
         if (data.length == 0) revert Errors.InvalidData();
         if (signature.length == 0) revert Errors.InvalidSignature();
+        if (signer == address(0)) revert Errors.ZeroAddress();
         
-        // Rate limiting check
-        if (block.timestamp < lastActionTimestamp[msg.sender] + RATE_LIMIT_WINDOW) {
-            revert Errors.RateLimitExceeded();
+        // Check if signer is authorized
+        if (!ISignerRegistry(signerRegistry).isValidSigner(signer)) {
+            revert Errors.NotAuthorizedSigner();
         }
         
         // Check if signer can sign this claim type
-        if (!ISignerRegistry(signerRegistry).canSignClaimType(msg.sender, claimType)) {
+        if (!ISignerRegistry(signerRegistry).canSignClaimType(signer, claimType)) {
             revert Errors.SignerNotAuthorizedForClaimType();
         }
         
         // Get current nonce for replay protection
-        uint256 currentNonce = nonces[msg.sender];
+        uint256 currentNonce = nonces[signer];
         
         // Create EIP-712 compliant message digest
         bytes32 digest = Signatures.createClaimDigest(
@@ -106,18 +109,24 @@ contract Identity is IIdentity, ReentrancyGuard {
         );
         
         // Verify signature
-        if (!Signatures.verifySignature(digest, signature, msg.sender)) {
+        if (!Signatures.verifySignature(digest, signature, signer)) {
             revert Errors.InvalidSignature();
+        }
+        
+        // Rate limiting check - only apply if signer has added claims before
+        if (lastActionTimestamp[signer] > 0 && 
+            block.timestamp < lastActionTimestamp[signer] + RATE_LIMIT_WINDOW) {
+            revert Errors.RateLimitExceeded();
         }
         
         // CHECKS-EFFECTS-INTERACTIONS pattern
         // Effects: Update state before any external calls
-        nonces[msg.sender]++; // Increment nonce to prevent replay
-        lastActionTimestamp[msg.sender] = block.timestamp; // Update rate limit timestamp
+        nonces[signer]++; // Increment nonce to prevent replay
+        lastActionTimestamp[signer] = block.timestamp; // Update rate limit timestamp
         
         claims[claimType] = Claim({
             claimType: claimType,
-            signer: msg.sender,
+            signer: signer,
             documentIds: documentIds,
             signature: signature,
             data: data,
@@ -126,11 +135,11 @@ contract Identity is IIdentity, ReentrancyGuard {
             revoked: false
         });
         
-        emit Events.ClaimAdded(address(this), claimType, msg.sender, address(0), expiresAt);
+        emit Events.ClaimAdded(address(this), claimType, signer, address(0), expiresAt);
         
         // Interactions: External calls come last
         // Increment signer's claim count in registry
-        ISignerRegistry(signerRegistry).incrementClaimCount(msg.sender);
+        ISignerRegistry(signerRegistry).incrementClaimCount(signer);
     }
     
     /**

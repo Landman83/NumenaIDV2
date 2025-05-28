@@ -66,7 +66,7 @@ contract NumenaID is INumenaID {
      * @param commitment Hash of user's address and a secret nonce
      */
     function commitIdentity(bytes32 commitment) external {
-        IIdentityFactory(identityFactory).commitIdentity(commitment);
+        IIdentityFactory(identityFactory).commitIdentityFor(msg.sender, commitment);
     }
     
     /**
@@ -75,7 +75,7 @@ contract NumenaID is INumenaID {
      * @return identity Address of deployed identity contract
      */
     function revealAndCreateIdentity(uint256 nonce) external returns (address identity) {
-        return IIdentityFactory(identityFactory).revealAndDeployIdentity(nonce);
+        return IIdentityFactory(identityFactory).revealAndDeployIdentityFor(msg.sender, nonce);
     }
     
     /**
@@ -83,7 +83,9 @@ contract NumenaID is INumenaID {
      * @return identity Address of deployed identity contract
      */
     function createIdentity() external returns (address identity) {
-        return IIdentityFactory(identityFactory).deployIdentity();
+        // Call factory directly as the user, not as NumenaID
+        // This requires the factory to have a deployIdentityFor function
+        return IIdentityFactory(identityFactory).deployIdentityFor(msg.sender);
     }
     
     /**

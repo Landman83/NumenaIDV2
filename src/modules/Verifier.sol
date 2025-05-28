@@ -97,6 +97,17 @@ contract Verifier is IVerifier, ReentrancyGuard {
         uint256 nonce = identity.nonces(claim.signer);
         
         // Reconstruct EIP-712 digest (note: nonce should be nonce-1 since it was incremented after signing)
+        // We need to compute the domain separator for the identity contract, not use Verifier's
+        bytes32 identityDomainSeparator = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes("NumenaID")),
+                keccak256(bytes("1.0.0")),
+                block.chainid,
+                identityContract
+            )
+        );
+        
         bytes32 digest = Signatures.createClaimDigest(
             identityContract,
             claim.claimType,
@@ -104,7 +115,7 @@ contract Verifier is IVerifier, ReentrancyGuard {
             keccak256(claim.data),
             claim.expiresAt,
             nonce > 0 ? nonce - 1 : 0,  // Use the nonce at time of signing
-            DOMAIN_SEPARATOR
+            identityDomainSeparator
         );
         
         address recoveredSigner = Signatures.recoverSigner(digest, claim.signature);
@@ -221,6 +232,17 @@ contract Verifier is IVerifier, ReentrancyGuard {
         uint256 nonce = identity.nonces(claim.signer);
         
         // Reconstruct EIP-712 digest (note: nonce should be nonce-1 since it was incremented after signing)
+        // We need to compute the domain separator for the identity contract, not use Verifier's
+        bytes32 identityDomainSeparator = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes("NumenaID")),
+                keccak256(bytes("1.0.0")),
+                block.chainid,
+                identityContract
+            )
+        );
+        
         bytes32 digest = Signatures.createClaimDigest(
             identityContract,
             claim.claimType,
@@ -228,7 +250,7 @@ contract Verifier is IVerifier, ReentrancyGuard {
             keccak256(claim.data),
             claim.expiresAt,
             nonce > 0 ? nonce - 1 : 0,  // Use the nonce at time of signing
-            DOMAIN_SEPARATOR
+            identityDomainSeparator
         );
         
         return Signatures.verifySignature(digest, claim.signature, claim.signer);
@@ -241,18 +263,19 @@ contract Verifier is IVerifier, ReentrancyGuard {
      * @param data Encoded claim data
      * @param expiresAt Expiration timestamp (0 for no expiration)
      * @param signature Cryptographic signature
+     * @param signer The address that created the signature
      */
     function createClaimWithDocuments(
         address user,
         uint256 claimType,
         bytes calldata data,
         uint256 expiresAt,
-        bytes calldata signature
+        bytes calldata signature,
+        address signer
     ) external nonReentrant {
         // CHECKS
         // Get required document types from ClaimTypeRegistry
-        address claimTypeRegistry = INumenaID(numenaID).claimTypeRegistry();
-        uint256[] memory requiredDocTypes = IClaimTypeRegistry(claimTypeRegistry).getRequiredDocuments(claimType);
+        uint256[] memory requiredDocTypes = IClaimTypeRegistry(INumenaID(numenaID).claimTypeRegistry()).getRequiredDocuments(claimType);
         
         // Validate document count
         if (requiredDocTypes.length > MAX_DOCUMENTS_PER_CLAIM) revert Errors.BatchSizeTooLarge();
@@ -261,24 +284,21 @@ contract Verifier is IVerifier, ReentrancyGuard {
         address identityContract = identityRegistry.getIdentity(user);
         if (identityContract == address(0)) revert Errors.IdentityNotFound();
         
-        IIdentity identity = IIdentity(identityContract);
-        
         // Collect the most recent documents for each required type
         uint256[] memory documentIds = new uint256[](requiredDocTypes.length);
-        address complianceDoc = INumenaID(numenaID).complianceDocument();
         
         for (uint256 i = 0; i < requiredDocTypes.length; i++) {
-            uint256 docId = identity.getMostRecentDocumentByType(requiredDocTypes[i]);
-            documentIds[i] = docId;
+            documentIds[i] = IIdentity(identityContract).getMostRecentDocumentByType(requiredDocTypes[i]);
         }
         
         // EFFECTS (none in this function - state changes happen in external contracts)
         
         // INTERACTIONS
         // First add claim to identity (this will update state in Identity contract)
-        identity.addClaim(claimType, documentIds, expiresAt, data, signature);
+        IIdentity(identityContract).addClaim(claimType, documentIds, expiresAt, data, signature, signer);
         
         // Then record document access (separate loop to follow checks-effects-interactions)
+        address complianceDoc = INumenaID(numenaID).complianceDocument();
         for (uint256 i = 0; i < documentIds.length; i++) {
             IComplianceDocument(complianceDoc).recordDocumentAccess(documentIds[i], msg.sender);
         }

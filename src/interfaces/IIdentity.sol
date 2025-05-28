@@ -37,13 +37,20 @@ interface IIdentity {
     
     /**
      * @dev Adds a new claim with signature verification
+     * @param claimType The type of claim being added
+     * @param documentIds Array of document NFT token IDs
+     * @param expiresAt Timestamp when claim expires (0 for no expiration)
+     * @param data Encoded claim data
+     * @param signature Cryptographic signature
+     * @param signer The address that created the signature
      */
     function addClaim(
         uint256 claimType,
         uint256[] calldata documentIds,
         uint256 expiresAt,
         bytes calldata data,
-        bytes calldata signature
+        bytes calldata signature,
+        address signer
     ) external;
     
     /**

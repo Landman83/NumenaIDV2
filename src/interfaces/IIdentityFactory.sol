@@ -12,14 +12,29 @@ interface IIdentityFactory {
     function commitIdentity(bytes32 commitment) external;
     
     /**
+     * @dev Commit identity for a specific user (only callable by NumenaID router)
+     */
+    function commitIdentityFor(address user, bytes32 commitment) external;
+    
+    /**
      * @dev Step 2 of secure identity creation: Reveal and deploy identity
      */
     function revealAndDeployIdentity(uint256 nonce) external returns (address identity);
     
     /**
+     * @dev Reveal and deploy identity for a specific user (only callable by NumenaID router)
+     */
+    function revealAndDeployIdentityFor(address user, uint256 nonce) external returns (address identity);
+    
+    /**
      * @dev Legacy deployment function (kept for backward compatibility)
      */
     function deployIdentity() external returns (address identity);
+    
+    /**
+     * @dev Deploy identity for a specific user (only callable by NumenaID router)
+     */
+    function deployIdentityFor(address user) external returns (address identity);
     
     /**
      * @dev Adds a new valid bytecode hash for identity contracts

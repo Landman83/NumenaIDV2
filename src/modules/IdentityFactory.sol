@@ -55,13 +55,8 @@ contract IdentityFactory is IIdentityFactory, AccessControl {
         _grantRole(DEFAULT_ADMIN_ROLE, _admin);
         _grantRole(Roles.ADMIN_ROLE, _admin);
         
-        // Add the expected bytecode hash for Identity contracts
-        bytes memory bytecode = abi.encodePacked(
-            type(Identity).creationCode,
-            abi.encode(address(0), address(0), address(0)) // Placeholder constructor args
-        );
-        bytes32 codeHash = keccak256(bytecode);
-        deployedCodeHashes[codeHash] = true;
+        // Note: We don't pre-add bytecode hashes because each Identity has unique bytecode
+        // due to address-dependent DOMAIN_SEPARATOR
     }
     
     /**
@@ -82,13 +77,35 @@ contract IdentityFactory is IIdentityFactory, AccessControl {
     }
     
     /**
+     * @dev Commit identity for a specific user (only callable by NumenaID router)
+     * @param user The user to commit for
+     * @param commitment Hash of user's address and a secret nonce
+     */
+    function commitIdentityFor(address user, bytes32 commitment) external {
+        // Only NumenaID router can call this
+        if (msg.sender != numenaID) revert Errors.Unauthorized();
+        
+        // Ensure user doesn't already have an identity
+        if (_identityRegistry.getIdentity(user) != address(0)) {
+            revert Errors.IdentityAlreadyExists();
+        }
+        
+        // Store commitment and timestamp
+        commitments[user] = commitment;
+        commitmentTimestamps[user] = block.timestamp;
+        
+        emit Events.IdentityCommitted(user, commitment, block.timestamp);
+    }
+    
+    /**
      * @dev Step 2 of identity creation: Reveal and deploy identity
      * @param nonce The secret nonce used in the commitment
      * @return identity The address of the newly deployed Identity contract
      */
     function revealAndDeployIdentity(uint256 nonce) external returns (address identity) {
-        // Rate limiting check
-        if (block.timestamp < lastDeploymentTimestamp[msg.sender] + DEPLOYMENT_RATE_LIMIT) {
+        // Rate limiting check - only apply if user has deployed before
+        if (lastDeploymentTimestamp[msg.sender] > 0 && 
+            block.timestamp < lastDeploymentTimestamp[msg.sender] + DEPLOYMENT_RATE_LIMIT) {
             revert Errors.RateLimitExceeded();
         }
         
@@ -127,6 +144,56 @@ contract IdentityFactory is IIdentityFactory, AccessControl {
     }
     
     /**
+     * @dev Reveal and deploy identity for a specific user (only callable by NumenaID router)
+     * @param user The user to deploy identity for
+     * @param nonce The secret nonce used in the commitment
+     * @return identity The address of the newly deployed Identity contract
+     */
+    function revealAndDeployIdentityFor(address user, uint256 nonce) external returns (address identity) {
+        // Only NumenaID router can call this
+        if (msg.sender != numenaID) revert Errors.Unauthorized();
+        
+        // Rate limiting check - only apply if user has deployed before
+        if (lastDeploymentTimestamp[user] > 0 && 
+            block.timestamp < lastDeploymentTimestamp[user] + DEPLOYMENT_RATE_LIMIT) {
+            revert Errors.RateLimitExceeded();
+        }
+        
+        // Check if user already has an identity
+        if (_identityRegistry.getIdentity(user) != address(0)) {
+            revert Errors.IdentityAlreadyExists();
+        }
+        
+        // Verify commitment exists
+        bytes32 storedCommitment = commitments[user];
+        if (storedCommitment == bytes32(0)) {
+            revert Errors.NoCommitmentFound();
+        }
+        
+        // Verify commitment timing
+        uint256 commitTime = commitmentTimestamps[user];
+        if (block.timestamp < commitTime + COMMITMENT_DELAY) {
+            revert Errors.CommitmentTooRecent();
+        }
+        if (block.timestamp > commitTime + COMMITMENT_EXPIRY) {
+            revert Errors.CommitmentExpired();
+        }
+        
+        // Verify commitment matches
+        bytes32 expectedCommitment = keccak256(abi.encodePacked(user, nonce));
+        if (storedCommitment != expectedCommitment) {
+            revert Errors.InvalidCommitment();
+        }
+        
+        // Clear commitment
+        delete commitments[user];
+        delete commitmentTimestamps[user];
+        
+        // Deploy identity contract
+        return _deployIdentity(user, nonce);
+    }
+    
+    /**
      * @dev Legacy deployment function (kept for backward compatibility, but less secure)
      * @return identity The address of the newly deployed Identity contract
      */
@@ -138,6 +205,24 @@ contract IdentityFactory is IIdentityFactory, AccessControl {
         
         // Use timestamp as nonce for legacy deployment
         return _deployIdentity(msg.sender, block.timestamp);
+    }
+    
+    /**
+     * @dev Deploy identity for a specific user (only callable by NumenaID router)
+     * @param user The user to deploy identity for
+     * @return identity The address of the newly deployed Identity contract
+     */
+    function deployIdentityFor(address user) external returns (address identity) {
+        // Only NumenaID router can call this
+        if (msg.sender != numenaID) revert Errors.Unauthorized();
+        
+        // Check if user already has an identity
+        if (_identityRegistry.getIdentity(user) != address(0)) {
+            revert Errors.IdentityAlreadyExists();
+        }
+        
+        // Use timestamp as nonce for deployment
+        return _deployIdentity(user, block.timestamp);
     }
     
     /**
@@ -163,18 +248,9 @@ contract IdentityFactory is IIdentityFactory, AccessControl {
             }
         }
         
-        // Verify the deployed contract matches expected bytecode hash
-        bytes32 deployedCodeHash = getCodeHash(identity);
-        bytes32 expectedCodeHash = getExpectedCodeHash();
-        
-        // Store the expected code hash if first deployment
-        if (!deployedCodeHashes[expectedCodeHash]) {
-            deployedCodeHashes[expectedCodeHash] = true;
-        }
-        
-        if (!deployedCodeHashes[deployedCodeHash]) {
-            revert Errors.InvalidBytecodeHash();
-        }
+        // Note: We cannot verify bytecode hash because each Identity contract has a unique
+        // DOMAIN_SEPARATOR that includes address(this), making runtime bytecode different.
+        // Instead, we rely on the fact that only this factory can deploy and register identities.
         
         // Track deployment
         deployedIdentities[identity] = true;
